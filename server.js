@@ -6,8 +6,11 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const API_KEY = process.env.PDF_API_KEY || '';
 
+// Trust proxy (Render runs behind a reverse proxy)
+app.set('trust proxy', 1);
+
 // Middleware
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '2mb' }));
 
 // Rate limiting: 10 requests per minute per IP
 const limiter = rateLimit({
@@ -27,6 +30,9 @@ let browser;
 
 async function getBrowser() {
   if (!browser || !browser.connected) {
+    if (browser) {
+      try { await browser.close(); } catch {}
+    }
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -34,7 +40,14 @@ async function getBrowser() {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--single-process',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-translate',
+        '--no-first-run',
+        '--no-zygote',
+        '--mute-audio',
       ],
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     });
@@ -45,7 +58,7 @@ async function getBrowser() {
 // Font URL map for common resume fonts
 const FONT_URLS = {
   'Inter': 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
-  'Calibri': null, // system font, no URL needed
+  'Calibri': null,
   'Georgia': null,
   'Times New Roman': null,
   'Arial': null,
@@ -75,11 +88,27 @@ app.post('/api/pdf', async (req, res) => {
     const b = await getBrowser();
     page = await b.newPage();
 
+    // Block unnecessary resources to save memory
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const type = req.resourceType();
+      if (['image', 'media', 'font'].includes(type)) {
+        // Allow font requests from Google Fonts, block others
+        if (type === 'font' && req.url().includes('fonts.gstatic.com')) {
+          req.continue();
+        } else if (type === 'image' && req.url().startsWith('data:')) {
+          req.continue();
+        } else {
+          req.abort();
+        }
+      } else {
+        req.continue();
+      }
+    });
+
     // Build font links
     const fontLinks = [];
-    // Always include Inter (default font)
     fontLinks.push(`<link href="${FONT_URLS['Inter']}" rel="stylesheet">`);
-    // Add requested font if it has a Google Fonts URL
     if (fontFamily && FONT_URLS[fontFamily]) {
       fontLinks.push(`<link href="${FONT_URLS[fontFamily]}" rel="stylesheet">`);
     }
@@ -101,7 +130,7 @@ app.post('/api/pdf', async (req, res) => {
 </html>`;
 
     await page.setContent(fullHtml, {
-      waitUntil: ['load', 'networkidle0'],
+      waitUntil: ['load', 'networkidle2'],
       timeout: 30000,
     });
 
@@ -123,6 +152,11 @@ app.post('/api/pdf', async (req, res) => {
     res.end(pdfBuffer);
   } catch (error) {
     console.error('PDF generation error:', error);
+    // If browser crashed, reset it
+    if (error.message && error.message.includes('detached')) {
+      try { if (browser) await browser.close(); } catch {}
+      browser = null;
+    }
     res.status(500).json({ error: 'PDF generation failed' });
   } finally {
     if (page) {
