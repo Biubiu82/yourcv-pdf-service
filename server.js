@@ -140,12 +140,11 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-// Start server
-getBrowser().then(() => {
-  app.listen(PORT, () => {
-    console.log(`PDF service running on port ${PORT}`);
-  });
-}).catch((err) => {
-  console.error('Failed to launch browser:', err);
-  process.exit(1);
+// Start server immediately (health check must respond before browser is ready)
+app.listen(PORT, () => {
+  console.log(`PDF service running on port ${PORT}`);
+  // Pre-warm browser in the background (non-blocking)
+  getBrowser()
+    .then(() => console.log('Browser ready'))
+    .catch((err) => console.error('Browser pre-warm failed:', err));
 });
