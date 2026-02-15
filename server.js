@@ -142,15 +142,20 @@ app.post('/api/pdf', async (req, res) => {
     return res.status(400).json({ error: 'HTML content is required' });
   }
 
-  // Quick reject if queue is too deep
-  if (waitQueue.length >= 10) {
-    return res.status(503).json({ error: 'Server busy, try again shortly' });
-  }
-
   const startTime = Date.now();
 
-  // Wait for a concurrency slot
-  await acquireSlot();
+  // Wait for a concurrency slot (queues if all slots busy)
+  const slotTimeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('QUEUE_TIMEOUT')), 60000)
+  );
+  try {
+    await Promise.race([acquireSlot(), slotTimeout]);
+  } catch (e) {
+    if (e.message === 'QUEUE_TIMEOUT') {
+      return res.status(504).json({ error: 'Request timed out, please try again' });
+    }
+    throw e;
+  }
 
   let page;
   try {
