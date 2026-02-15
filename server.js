@@ -116,9 +116,11 @@ app.post('/api/pdf', async (req, res) => {
       preferCSSPageSize: false,
     });
 
+    const pdfBuffer = Buffer.from(pdf);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
-    res.send(pdf);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.end(pdfBuffer);
   } catch (error) {
     console.error('PDF generation error:', error);
     res.status(500).json({ error: 'PDF generation failed' });
