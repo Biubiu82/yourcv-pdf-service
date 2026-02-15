@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: resumify-pdf-service
+    runtime: docker
+    plan: free
+    envVars:
+      - key: PDF_API_KEY
+        sync: false
+      - key: PORT
+        value: 3001
+    healthCheckPath: /health

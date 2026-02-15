@@ -1,0 +1,14 @@
+{
+  "name": "resumify-pdf-service",
+  "version": "1.0.0",
+  "description": "Puppeteer PDF generation microservice for Resumify",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "puppeteer": "^23.0.0",
+    "express-rate-limit": "^7.4.0"
+  }
+}
