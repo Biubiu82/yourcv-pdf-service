@@ -11,7 +11,7 @@ const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '3', 10);
 app.set('trust proxy', 1);
 
 // Middleware
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // Rate limiting: 20 requests per minute per IP
 const limiter = rateLimit({
