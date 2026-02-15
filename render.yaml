@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: resumify-pdf-service
+    name: yourcv-pdf-service
     runtime: docker
     plan: free
     envVars:

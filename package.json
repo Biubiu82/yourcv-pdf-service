@@ -1,7 +1,7 @@
 {
-  "name": "resumify-pdf-service",
+  "name": "yourcv-pdf-service",
   "version": "1.0.0",
-  "description": "Puppeteer PDF generation microservice for Resumify",
+  "description": "Puppeteer PDF generation microservice for YourCV",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
