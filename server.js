@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const API_KEY = process.env.PDF_API_KEY || '';
+const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '3', 10);
 
 // Trust proxy (Render runs behind a reverse proxy)
 app.set('trust proxy', 1);
@@ -12,21 +13,32 @@ app.set('trust proxy', 1);
 // Middleware
 app.use(express.json({ limit: '2mb' }));
 
-// Rate limiting: 10 requests per minute per IP
+// Rate limiting: 20 requests per minute per IP
 const limiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 20,
   message: { error: 'Too many requests, please try again later.' },
 });
 app.use('/api/pdf', limiter);
 
-// Health check
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
+// ─── Browser Management ─────────────────────────────────────────────
 
-// Browser instance (reused across requests)
 let browser;
+const BROWSER_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-extensions',
+  '--disable-background-networking',
+  '--disable-default-apps',
+  '--disable-sync',
+  '--disable-translate',
+  '--no-first-run',
+  '--no-zygote',
+  '--mute-audio',
+  '--hide-scrollbars',
+];
 
 async function getBrowser() {
   if (!browser || !browser.connected) {
@@ -35,33 +47,47 @@ async function getBrowser() {
     }
     browser = await puppeteer.launch({
       headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-default-apps',
-        '--disable-sync',
-        '--disable-translate',
-        '--no-first-run',
-        '--no-zygote',
-        '--mute-audio',
-      ],
+      args: BROWSER_ARGS,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     });
+    console.log('Browser launched');
   }
   return browser;
 }
 
-// Font URL map for common resume fonts
+// ─── Concurrency Queue ──────────────────────────────────────────────
+// Limits concurrent PDF generations to prevent OOM on free tier
+
+let activeJobs = 0;
+const waitQueue = [];
+
+function acquireSlot() {
+  return new Promise((resolve) => {
+    if (activeJobs < MAX_CONCURRENT) {
+      activeJobs++;
+      resolve();
+    } else {
+      waitQueue.push(resolve);
+    }
+  });
+}
+
+function releaseSlot() {
+  if (waitQueue.length > 0) {
+    const next = waitQueue.shift();
+    next(); // don't decrement, slot transfers to next waiter
+  } else {
+    activeJobs--;
+  }
+}
+
+// ─── Font CSS Cache ─────────────────────────────────────────────────
+// Cache Google Fonts CSS in memory to avoid network requests per PDF
+
+const fontCSSCache = new Map();
+
 const FONT_URLS = {
   'Inter': 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
-  'Calibri': null,
-  'Georgia': null,
-  'Times New Roman': null,
-  'Arial': null,
   'Roboto': 'https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap',
   'Open Sans': 'https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap',
   'Lato': 'https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap',
@@ -69,7 +95,41 @@ const FONT_URLS = {
   'Playfair Display': 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&display=swap',
 };
 
-// PDF generation endpoint
+async function getFontCSS(fontName) {
+  if (!FONT_URLS[fontName]) return '';
+  if (fontCSSCache.has(fontName)) return fontCSSCache.get(fontName);
+
+  try {
+    const res = await fetch(FONT_URLS[fontName], {
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' },
+    });
+    const css = await res.text();
+    fontCSSCache.set(fontName, css);
+    return css;
+  } catch {
+    return '';
+  }
+}
+
+// Pre-warm font cache at startup
+async function prewarmFontCache() {
+  await Promise.all(Object.keys(FONT_URLS).map((f) => getFontCSS(f)));
+  console.log(`Font cache warmed: ${fontCSSCache.size} fonts`);
+}
+
+// ─── Health Check ───────────────────────────────────────────────────
+
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    activeJobs,
+    queued: waitQueue.length,
+    browserConnected: browser?.connected ?? false,
+  });
+});
+
+// ─── PDF Generation ─────────────────────────────────────────────────
+
 app.post('/api/pdf', async (req, res) => {
   // Verify API key
   const apiKey = req.headers['x-api-key'];
@@ -78,47 +138,43 @@ app.post('/api/pdf', async (req, res) => {
   }
 
   const { html, css, format = 'A4', fontFamily } = req.body;
-
   if (!html) {
     return res.status(400).json({ error: 'HTML content is required' });
   }
+
+  // Quick reject if queue is too deep
+  if (waitQueue.length >= 10) {
+    return res.status(503).json({ error: 'Server busy, try again shortly' });
+  }
+
+  const startTime = Date.now();
+
+  // Wait for a concurrency slot
+  await acquireSlot();
 
   let page;
   try {
     const b = await getBrowser();
     page = await b.newPage();
 
-    // Block unnecessary resources to save memory
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      const type = req.resourceType();
-      if (['image', 'media', 'font'].includes(type)) {
-        // Allow font requests from Google Fonts, block others
-        if (type === 'font' && req.url().includes('fonts.gstatic.com')) {
-          req.continue();
-        } else if (type === 'image' && req.url().startsWith('data:')) {
-          req.continue();
-        } else {
-          req.abort();
-        }
-      } else {
-        req.continue();
-      }
-    });
+    // Disable JS execution (not needed for static HTML)
+    await page.setJavaScriptEnabled(false);
 
-    // Build font links
-    const fontLinks = [];
-    fontLinks.push(`<link href="${FONT_URLS['Inter']}" rel="stylesheet">`);
-    if (fontFamily && FONT_URLS[fontFamily]) {
-      fontLinks.push(`<link href="${FONT_URLS[fontFamily]}" rel="stylesheet">`);
+    // Set viewport to A4-ish size for consistent rendering
+    await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
+
+    // Build font CSS inline (no network requests needed)
+    let fontCSS = await getFontCSS('Inter');
+    if (fontFamily && fontFamily !== 'Inter' && FONT_URLS[fontFamily]) {
+      fontCSS += '\n' + await getFontCSS(fontFamily);
     }
 
     const fullHtml = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  ${fontLinks.join('\n  ')}
   <style>
+    ${fontCSS}
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: white; }
     ${css || ''}
@@ -129,13 +185,11 @@ app.post('/api/pdf', async (req, res) => {
 </body>
 </html>`;
 
+    // setContent with domcontentloaded is faster — fonts are inlined
     await page.setContent(fullHtml, {
-      waitUntil: ['load', 'networkidle2'],
-      timeout: 30000,
+      waitUntil: 'domcontentloaded',
+      timeout: 15000,
     });
-
-    // Wait for fonts to load
-    await page.evaluateHandle('document.fonts.ready');
 
     // Generate PDF
     const pdf = await page.pdf({
@@ -146,41 +200,50 @@ app.post('/api/pdf', async (req, res) => {
     });
 
     const pdfBuffer = Buffer.from(pdf);
+    const elapsed = Date.now() - startTime;
+    console.log(`PDF generated: ${(pdfBuffer.length / 1024).toFixed(1)}KB in ${elapsed}ms`);
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
     res.setHeader('Content-Length', pdfBuffer.length);
     res.end(pdfBuffer);
   } catch (error) {
-    console.error('PDF generation error:', error);
-    // If browser crashed, reset it
-    if (error.message && error.message.includes('detached')) {
+    console.error('PDF generation error:', error.message);
+    // If browser crashed, reset it for next request
+    if (error.message && (error.message.includes('detached') || error.message.includes('closed') || error.message.includes('crashed'))) {
       try { if (browser) await browser.close(); } catch {}
       browser = null;
     }
-    res.status(500).json({ error: 'PDF generation failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'PDF generation failed' });
+    }
   } finally {
     if (page) {
       await page.close().catch(() => {});
     }
+    releaseSlot();
   }
 });
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  if (browser) await browser.close();
-  process.exit(0);
-});
+// ─── Graceful Shutdown ──────────────────────────────────────────────
 
-process.on('SIGINT', async () => {
-  if (browser) await browser.close();
+async function shutdown() {
+  console.log('Shutting down...');
+  if (browser) {
+    try { await browser.close(); } catch {}
+  }
   process.exit(0);
-});
+}
 
-// Start server immediately (health check must respond before browser is ready)
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// ─── Start Server ───────────────────────────────────────────────────
+
 app.listen(PORT, () => {
-  console.log(`PDF service running on port ${PORT}`);
-  // Pre-warm browser in the background (non-blocking)
-  getBrowser()
-    .then(() => console.log('Browser ready'))
-    .catch((err) => console.error('Browser pre-warm failed:', err));
+  console.log(`PDF service running on port ${PORT} (max concurrent: ${MAX_CONCURRENT})`);
+  // Pre-warm browser + font cache in parallel
+  Promise.all([getBrowser(), prewarmFontCache()])
+    .then(() => console.log('Ready'))
+    .catch((err) => console.error('Warmup error:', err.message));
 });
