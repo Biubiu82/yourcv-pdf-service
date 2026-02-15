@@ -146,7 +146,7 @@ app.post('/api/pdf', async (req, res) => {
 
   // Wait for a concurrency slot (queues if all slots busy)
   const slotTimeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('QUEUE_TIMEOUT')), 60000)
+    setTimeout(() => reject(new Error('QUEUE_TIMEOUT')), 90000)
   );
   try {
     await Promise.race([acquireSlot(), slotTimeout]);
