@@ -243,12 +243,30 @@ async function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
+// ─── Keep Alive (prevent Render free tier sleep) ────────────────────
+
+const KEEP_ALIVE_URL = process.env.KEEP_ALIVE_URL; // e.g. https://yourcv-pdf-service.onrender.com
+const KEEP_ALIVE_INTERVAL = 14 * 60 * 1000; // 14 minutes
+
+function startKeepAlive() {
+  if (!KEEP_ALIVE_URL) return;
+  setInterval(async () => {
+    try {
+      await fetch(`${KEEP_ALIVE_URL}/health`);
+    } catch {}
+  }, KEEP_ALIVE_INTERVAL);
+  console.log(`Keep-alive enabled: pinging ${KEEP_ALIVE_URL} every 14min`);
+}
+
 // ─── Start Server ───────────────────────────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`PDF service running on port ${PORT} (max concurrent: ${MAX_CONCURRENT})`);
   // Pre-warm browser + font cache in parallel
   Promise.all([getBrowser(), prewarmFontCache()])
-    .then(() => console.log('Ready'))
+    .then(() => {
+      console.log('Ready');
+      startKeepAlive();
+    })
     .catch((err) => console.error('Warmup error:', err.message));
 });
