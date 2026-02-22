@@ -169,10 +169,11 @@ app.post('/api/pdf', async (req, res) => {
     // Set viewport to A4-ish size for consistent rendering
     await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
 
-    // Build font CSS inline (no network requests needed)
-    let fontCSS = await getFontCSS('Inter');
+    // Inter is installed locally in Docker — no CSS needed for it.
+    // Only fetch Google Fonts CSS for non-local fonts.
+    let fontCSS = '';
     if (fontFamily && fontFamily !== 'Inter' && FONT_URLS[fontFamily]) {
-      fontCSS += '\n' + await getFontCSS(fontFamily);
+      fontCSS = await getFontCSS(fontFamily);
     }
 
     const fullHtml = `<!DOCTYPE html>
