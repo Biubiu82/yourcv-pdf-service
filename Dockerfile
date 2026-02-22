@@ -13,9 +13,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Inter font (primary CV font with excellent Vietnamese support)
 RUN mkdir -p /usr/share/fonts/inter && \
-    curl -sL "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip" -o /tmp/inter.zip && \
-    unzip -j /tmp/inter.zip "Inter-4.1/InterVariable.ttf" "Inter-4.1/InterVariable-Italic.ttf" -d /usr/share/fonts/inter/ && \
-    rm /tmp/inter.zip && \
+    curl -sLo /usr/share/fonts/inter/Inter.ttf "https://github.com/google/fonts/raw/main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf" && \
     fc-cache -f
 
 # Set Puppeteer to use system Chromium
