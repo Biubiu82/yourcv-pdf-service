@@ -191,10 +191,10 @@ app.post('/api/pdf', async (req, res) => {
 </body>
 </html>`;
 
-    // setContent with domcontentloaded is faster — fonts are inlined
+    // networkidle0 waits for font .woff2 files to finish downloading
     await page.setContent(fullHtml, {
-      waitUntil: 'domcontentloaded',
-      timeout: 15000,
+      waitUntil: 'networkidle0',
+      timeout: 30000,
     });
 
     // Generate PDF
