@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     fonts-noto-color-emoji \
     fonts-liberation \
     fonts-dejavu-core \
-    curl unzip fontconfig \
+    ca-certificates curl fontconfig \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
