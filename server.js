@@ -169,11 +169,20 @@ app.post('/api/pdf', async (req, res) => {
     // Set viewport to A4-ish size for consistent rendering
     await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
 
-    // Inter is installed locally in Docker — no CSS needed for it.
-    // Only fetch Google Fonts CSS for non-local fonts.
-    let fontCSS = '';
+    // Inter is installed locally in Docker via variable font file.
+    // Explicit @font-face ensures Chromium maps "Inter" to the local file.
+    // For non-Inter fonts, fetch CSS from Google Fonts.
+    let fontCSS = `
+      @font-face {
+        font-family: 'Inter';
+        src: local('Inter');
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: swap;
+      }
+    `;
     if (fontFamily && fontFamily !== 'Inter' && FONT_URLS[fontFamily]) {
-      fontCSS = await getFontCSS(fontFamily);
+      fontCSS += '\n' + await getFontCSS(fontFamily);
     }
 
     const fullHtml = `<!DOCTYPE html>
@@ -183,7 +192,7 @@ app.post('/api/pdf', async (req, res) => {
   <style>
     ${fontCSS}
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: white; }
+    body { background: white; font-family: 'Inter', system-ui, sans-serif; }
     ${css || ''}
   </style>
 </head>
