@@ -129,6 +129,42 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// ─── Font Diagnostics ───────────────────────────────────────────────
+
+app.get('/debug/fonts', async (_req, res) => {
+  try {
+    const { execSync } = require('child_process');
+    const interFonts = execSync('fc-list | grep -i inter || echo "No Inter fonts found"').toString();
+    const allFonts = execSync('fc-list --format="%{family}\n" | sort -u | head -30').toString();
+    const fontFiles = execSync('ls -la /usr/share/fonts/inter/ 2>/dev/null || echo "No /usr/share/fonts/inter/ directory"').toString();
+
+    // Also test rendering: create a page and check what font is actually used
+    const b = await getBrowser();
+    const page = await b.newPage();
+    await page.setContent(`<!DOCTYPE html>
+<html><head><style>
+  @font-face { font-family: 'Inter'; src: local('Inter'); font-weight: 100 900; font-style: normal; }
+  body { font-family: 'Inter', system-ui, sans-serif; }
+</style></head>
+<body><span id="test">Xin chào Việt Nam</span></body></html>`, { waitUntil: 'networkidle0' });
+
+    const usedFont = await page.evaluate(() => {
+      const el = document.getElementById('test');
+      return window.getComputedStyle(el).fontFamily;
+    });
+    await page.close();
+
+    res.json({
+      interFonts: interFonts.trim(),
+      fontFiles: fontFiles.trim(),
+      sampleSystemFonts: allFonts.trim().split('\n').slice(0, 30),
+      renderedFontFamily: usedFont,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── PDF Generation ─────────────────────────────────────────────────
 
 app.post('/api/pdf', async (req, res) => {
