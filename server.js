@@ -1,6 +1,8 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
 const rateLimit = require('express-rate-limit');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -81,6 +83,40 @@ function releaseSlot() {
   }
 }
 
+// ─── Local Inter Font (base64-encoded at startup) ──────────────────
+// Read the locally installed Inter font files once and create @font-face CSS
+// with embedded data URIs. This guarantees Chromium uses Inter regardless of
+// fontconfig naming or file:// security restrictions.
+
+let interFontCSS = '';
+
+function loadInterFont() {
+  const fontDir = '/usr/share/fonts/inter';
+  try {
+    const regularPath = path.join(fontDir, 'Inter.ttf');
+
+    if (fs.existsSync(regularPath)) {
+      const b64 = fs.readFileSync(regularPath).toString('base64');
+      interFontCSS = `
+        @font-face {
+          font-family: 'Inter';
+          src: url(data:font/truetype;base64,${b64}) format('truetype');
+          font-weight: 100 900;
+          font-style: normal;
+          font-display: swap;
+        }
+      `;
+      console.log(`Inter font loaded: ${(fs.statSync(regularPath).size / 1024).toFixed(0)}KB → ${(interFontCSS.length / 1024).toFixed(0)}KB base64 CSS`);
+    } else {
+      console.warn('Inter font file not found at', regularPath);
+    }
+  } catch (err) {
+    console.error('Failed to load Inter font:', err.message);
+  }
+}
+
+loadInterFont();
+
 // ─── Font CSS Cache ─────────────────────────────────────────────────
 // Cache Google Fonts CSS in memory to avoid network requests per PDF
 
@@ -141,9 +177,10 @@ app.get('/debug/fonts', async (_req, res) => {
     // Also test rendering: create a page and check what font is actually used
     const b = await getBrowser();
     const page = await b.newPage();
+    const testFontCSS = interFontCSS || "@font-face { font-family: 'Inter'; src: local('Inter'); font-weight: 100 900; font-style: normal; }";
     await page.setContent(`<!DOCTYPE html>
 <html><head><style>
-  @font-face { font-family: 'Inter'; src: local('Inter'); font-weight: 100 900; font-style: normal; }
+  ${testFontCSS}
   body { font-family: 'Inter', system-ui, sans-serif; }
 </style></head>
 <body><span id="test">Xin chào Việt Nam</span></body></html>`, { waitUntil: 'networkidle0' });
@@ -155,6 +192,8 @@ app.get('/debug/fonts', async (_req, res) => {
     await page.close();
 
     res.json({
+      interFontCSSLoaded: interFontCSS.length > 0,
+      interFontCSSSize: `${(interFontCSS.length / 1024).toFixed(0)}KB`,
       interFonts: interFonts.trim(),
       fontFiles: fontFiles.trim(),
       sampleSystemFonts: allFonts.trim().split('\n').slice(0, 30),
@@ -208,7 +247,9 @@ app.post('/api/pdf', async (req, res) => {
     // Inter is installed locally in Docker via variable font file.
     // Explicit @font-face ensures Chromium maps "Inter" to the local file.
     // For non-Inter fonts, fetch CSS from Google Fonts.
-    let fontCSS = `
+    // Use base64-embedded Inter font (loaded at startup) for guaranteed rendering.
+    // Falls back to local('Inter') if base64 loading failed.
+    let fontCSS = interFontCSS || `
       @font-face {
         font-family: 'Inter';
         src: local('Inter');
