@@ -88,6 +88,7 @@ const fontCSSCache = new Map();
 
 const FONT_URLS = {
   'Inter': 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
+  'Noto Serif': 'https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap',
   'Roboto': 'https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap',
   'Open Sans': 'https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&display=swap',
   'Lato': 'https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&display=swap',
