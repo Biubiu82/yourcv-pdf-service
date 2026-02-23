@@ -11,12 +11,16 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Inter variable font (excellent Vietnamese support)
-RUN mkdir -p /usr/share/fonts/inter && \
+# Install Inter + EB Garamond variable fonts
+RUN mkdir -p /usr/share/fonts/inter /usr/share/fonts/ebgaramond && \
     curl -sLo /usr/share/fonts/inter/Inter.ttf \
       "https://github.com/google/fonts/raw/main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf" && \
     curl -sLo /usr/share/fonts/inter/Inter-Italic.ttf \
       "https://github.com/google/fonts/raw/main/ofl/inter/Inter-Italic%5Bopsz%2Cwght%5D.ttf" && \
+    curl -sLo /usr/share/fonts/ebgaramond/EBGaramond.ttf \
+      "https://github.com/google/fonts/raw/main/ofl/ebgaramond/EBGaramond%5Bwght%5D.ttf" && \
+    curl -sLo /usr/share/fonts/ebgaramond/EBGaramond-Italic.ttf \
+      "https://github.com/google/fonts/raw/main/ofl/ebgaramond/EBGaramond-Italic%5Bwght%5D.ttf" && \
     fc-cache -fv
 
 # Set Puppeteer to use system Chromium
